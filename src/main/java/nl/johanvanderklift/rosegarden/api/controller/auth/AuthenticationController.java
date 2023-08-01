@@ -4,10 +4,11 @@ import jakarta.validation.Valid;
 import nl.johanvanderklift.rosegarden.api.model.LoginBody;
 import nl.johanvanderklift.rosegarden.api.model.LoginResponse;
 import nl.johanvanderklift.rosegarden.api.model.RegistrationBody;
+import nl.johanvanderklift.rosegarden.exception.EmailFailureException;
 import nl.johanvanderklift.rosegarden.exception.UserAlreadyExistsException;
+import nl.johanvanderklift.rosegarden.exception.UserNotVerifiedException;
 import nl.johanvanderklift.rosegarden.model.LocalUser;
 import nl.johanvanderklift.rosegarden.service.UserService;
-import org.springframework.cglib.core.Local;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -30,18 +31,44 @@ public class AuthenticationController {
             return ResponseEntity.ok().build();
         } catch (UserAlreadyExistsException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).build();
+        } catch (EmailFailureException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> loginUser(@Valid @RequestBody LoginBody loginBody) {
-        String jwt = userService.loginUser(loginBody);
+        String jwt = null;
+        try {
+            jwt = userService.loginUser(loginBody);
+        } catch (UserNotVerifiedException e) {
+            LoginResponse response = new LoginResponse();
+            response.setSuccess(false);
+            String reason = "USER_NOT_VERIFIED";
+            if (e.isNewEmailSend()) {
+                reason += "_EMAIL_RESEND";
+            }
+            response.setFailureReason(reason);
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
+        } catch (EmailFailureException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
         if (jwt == null) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
         } else {
             LoginResponse response = new LoginResponse();
             response.setJwt(jwt);
+            response.setSuccess(true);
             return ResponseEntity.ok(response);
+        }
+    }
+
+    @PostMapping("/verify")
+    public ResponseEntity verifyEmail(@RequestParam String token) {
+        if (userService.verifyUser(token)) {
+            return ResponseEntity.ok().build();
+        } else {
+            return ResponseEntity.status(HttpStatus.CONFLICT).build();
         }
     }
 
